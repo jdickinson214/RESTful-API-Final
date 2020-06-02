@@ -1,17 +1,160 @@
 from google.cloud import datastore
 from flask import Flask, request
+from requests_oauthlib import OAuth2Session
 import json
 import constants as c
 import model
+import os
+
+from google.oauth2 import id_token
+from google.auth import crypt
+from google.auth import jwt
+from google.auth.transport import requests
 
 app = Flask(__name__)
 client = datastore.Client()
 
 
-#*************Main Page*************
+#used for testing locally. disables https requirement
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+app.secret_key = str(c.generate_random_code(20))
+
+# #get client_secret file from directory and assign values
+client_secret_path = os.path.dirname(os.path.abspath(__file__)) + "/creds/client_secret.json"
+CLIENT_SECRET_FILE = json.load(open(client_secret_path))
+client_id = CLIENT_SECRET_FILE['web']['client_id']
+client_secret = CLIENT_SECRET_FILE['web']["client_secret"]
+
+
+# This is the page that you will use to decode and collect the info from
+# the Google authentication flow
+redirect_uri = c.url + '/oauth'
+
+# These let us get basic info to identify a user and not much else
+# they are part of the Google People API
+scope = ['https://www.googleapis.com/auth/userinfo.email', 
+         'openid',
+         'https://www.googleapis.com/auth/userinfo.profile']
+oauth = OAuth2Session(client_id, redirect_uri=redirect_uri,
+                          scope=scope)
+
+# This link will redirect users to begin the OAuth flow with Google
 @app.route('/')
 def index():
-    return "Please navigate to /boats to use this API"\
+    authorization_url, state = oauth.authorization_url(
+        'https://accounts.google.com/o/oauth2/auth',
+        # access_type and prompt are Google specific extra parameters.
+        access_type="offline", prompt="select_account")
+    return 'Please go <a href=%s>here</a> and authorize access.' % authorization_url
+
+# This is where users will be redirected back to and where you can collect
+# the JWT for use in future requests
+@app.route('/oauth')
+def oauthroute():
+    #get token
+    token = oauth.fetch_token(
+        'https://accounts.google.com/o/oauth2/token',
+        authorization_response=request.url,
+        client_secret=client_secret)
+    #get id_info
+    req = requests.Request()
+    id_info = id_token.verify_oauth2_token(token['id_token'], req, client_id)
+    verify_url = c.url + '/verify-jwt?jwt=' + token['id_token']
+
+    # check if user exists, if not store user uniqueID and email in database
+    query = client.query(kind=model.users)
+    query.add_filter('uniqueID', '=', id_info['email'])
+    results = list(query.fetch())
+    if not results:
+        #list is empty, add new user
+        new_user = datastore.entity.Entity(key=client.key(model.users))
+        new_user.update({"uniqueID": id_info['email']})
+        client.put(new_user)
+
+    return """Your JWT is: %s <br><br> Please go <a href=%s> here</a> to verify JWT <br><br> user's uniqueID is %s""" % (token['id_token'], verify_url, id_info['email'])
+    
+
+# This page demonstrates verifying a JWT. id_info['email'] contains
+# the user's email address and can be used to identify them
+# this is the code that could prefix any API call that needs to be
+# tied to a specific user by checking that the email in the verified
+# JWT matches the email associated to the resource being accessed.
+@app.route('/verify-jwt')
+def verify():
+    req = requests.Request()
+
+    try:
+      id_info = id_token.verify_oauth2_token( 
+        request.args['jwt'], req, client_id)
+    except ValueError:
+      return 'Invalid jwt', 401
+
+    return repr(id_info) + "<br><br> the user is: " + id_info['email']
+
+
+
+
+
+
+
+
+@app.route('/users', methods=['GET'])
+def users_get():
+    if request.method == "GET":
+        query = client.query(kind=model.users)  
+        results = list(query.fetch())
+        c.addTags(results, "/users/")
+        output = {"users": results}
+        return json.dumps(output)    
+    else:
+        return 'Method not recognized, please use GET'
+
+##############################################################
+#
+#   GET:    gets this user and all boats they own
+#   DELETE: if authorized, delete this user
+#   
+#   note: checks bearer token for jwt and returns all boats for
+#   that jwt, not for the id
+#
+##############################################################
+
+@app.route('/users/<id>', methods=['DELETE', 'GET'])
+def user_get_delete(id):
+    if 'Authorization' not in request.headers:
+        return 'Missing or Invalid JWT', 401
+    #ensure token is valid
+    try:
+        req = requests.Request()
+        token_value = request.headers['Authorization'].split(' ')[1]
+        id_info = id_token.verify_oauth2_token(token_value, req, client_id)
+    except ValueError:
+        return 'Missing or Invalid JWT', 401
+    
+    user_key = client.key(model.users, int(id))    
+    user = client.get(key=user_key)
+    
+    #all valid, run query
+    if request.method == 'GET':
+        query = client.query(kind=model.boats)
+        query.add_filter('owner', '=', str(id_info['email']))
+        boatList = list(query.fetch())
+        c.addTags(boatList, "/boats/")
+        user.update({"id": str(user.key.id), "boats": boatList})
+        output = {"user": user}
+        return json.dumps(output)
+ 
+    elif request.method == "DELETE":
+        client.delete(user_key)
+        return ('', 204)
+
+
+    else:
+        return 'Method not recognized, please use DELETE or GET'
+
+
+
+
 
 
 #*************/boats*************
@@ -23,21 +166,42 @@ def index():
 @app.route('/boats', methods=['POST', 'GET'])
 def boats_get_post():
 
-
+    if 'application/json' not in request.accept_mimetypes:
+        return (json.dumps(c.accNotJSON), 406)
     if request.method == 'POST':
+        #ensure content type is correct
+        if request.headers['Content-Type'] != 'application/json':
+            return (json.dumps(c.reqHeadNotJSON), 415)
         content = request.get_json()
+
+        #   Input Validation
         if model.invalidRequest(content, "boat"):
             return (json.dumps(c.badRequest), 400)
+        if 'Authorization' not in request.headers:
+            return 'Missing or Invalid JWT', 401
+        #ensure token is valid
+        try:
+            req = requests.Request()
+            token_value = request.headers['Authorization'].split(' ')[1]
+            id_info = id_token.verify_oauth2_token( 
+            token_value, req, client_id)
+        except ValueError:
+            return 'Missing or Invalid JWT', 401
+
+        #All valid, store values and post to client
         new_boat = datastore.entity.Entity(key=client.key(model.boats))
-        new_boat.update({"name": content["name"], "type": content["type"], "length": content["length"], "loads": []})
+        new_boat.update({"name": content["name"], "type": content["type"], "length": int(content["length"]), "owner": id_info['email'], "loads": []})
         client.put(new_boat)
-        new_boat.update({"id": str(new_boat.key.id), "self": c.url + "/boats/" + str(new_boat.key.id)})
-        return (json.dumps(new_boat), 201)
+        results = {'new boat': new_boat}
+        c.addTags(results, "/boats/")
+        #new_boat.update({"id": str(new_boat.key.id)})
+        return (json.dumps(results), 201)
+
 
 
     elif request.method == "GET":
         query = client.query(kind=model.boats)
-        q_limit = int(request.args.get('limit', '3'))
+        q_limit = int(request.args.get('limit', '5'))
         q_offset = int(request.args.get('offset', '0'))
         l_iterator = query.fetch(limit = q_limit, offset = q_offset)
         pages = l_iterator.pages
@@ -47,12 +211,10 @@ def boats_get_post():
         	next_url = request.base_url + "?limit=" + str(q_limit) + "&offset=" + str(next_offset)
         else:
         	next_url = None
-        for e in results:
-        	e["id"] = e.key.id
+        c.addTags(results, "/boats/")  #function in c.py
         output = {"boats": results}
         if next_url:
         	output["next"] = next_url
-        c.addTags(results, "/boats/")  #function in c.py
         return json.dumps(output)
 
     else:
@@ -68,12 +230,31 @@ def boats_get_post():
 @app.route('/boats/<id>', methods=['DELETE', 'GET'])
 def boat_get_delete(id):
 
-
+    #check authorization
+    if 'Authorization' not in request.headers:
+        return 'Missing or Invalid JWT', 401
+        #ensure token is valid
+    try:
+        req = requests.Request()
+        token_value = request.headers['Authorization'].split(' ')[1]
+        id_info = id_token.verify_oauth2_token( 
+        token_value, req, client_id)
+    except ValueError:
+        return 'Missing or Invalid JWT', 401
+    
+    #check boat is valid
     boat_key = client.key(model.boats, int(id))
     boat = client.get(key=boat_key)
     if boat == None:
-        return (json.dumps(c.notFound), 404)
-
+        return "JWT valid but no boat with this boat_id exists", 403
+    if id_info['email'] != boat['owner']:
+        return "User not owner of boat", 403
+    
+    if request.method == 'GET':
+        for load in boat['loads']:
+        	load.update({"self": c.url + "/loads/" + load['id']})
+        boat.update({"id": id, "self": c.url + "/boats/" + id})
+        return json.dumps(boat)
 
     elif request.method == 'DELETE':
         #go through all loads on boat and reset 'carrier' to null
@@ -85,14 +266,6 @@ def boat_get_delete(id):
             client.put(load)
         client.delete(boat_key)
         return ('',204)
-
-
-    elif request.method == 'GET':
-        for load in boat['loads']:
-        	load.update({"self": c.url + "/loads/" + load['id']})
-        boat.update({"id": id, "self": c.url + "/boats/" + id})
-        return json.dumps(boat)
-
 
     else:
         return 'Method not recognized, please use DELETE, or GET'
@@ -148,6 +321,33 @@ def loads_get_post():
         return 'Method not recognized, please use either GET or POST'
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+#from here down needs authorization checks.
+#this ensures user modifying load has the ability to do so
+#example: user can't delete a load that's on a boat they don't own.
+
+
+
+
+
+
+
+
+
+
+
 #*************/loads/<id>*****************************************
 #
 #   Delete:     deletes this load
@@ -187,6 +387,11 @@ def load_get_delete(id):
 
     else:
         return 'Method not recognized, please use DELETE, or GET'
+
+
+
+
+
 
 
 
@@ -248,7 +453,23 @@ def load_boat_put_delete(lid, bid):
 
     else:
         return 'Method not recognized, please use PUT or DELETE'
-1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 if __name__ == '__main__':
