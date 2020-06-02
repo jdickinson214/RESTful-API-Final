@@ -1,4 +1,5 @@
-url = "https://hw4-dickinsj.uc.r.appspot.com"
+#url = "https://hw4-dickinsj.uc.r.appspot.com"
+url = "127.0.0.1:8080"
 
 #boat error messages
 badRequest = {"Error": "The request object is missing at least one of the required attributes"}
