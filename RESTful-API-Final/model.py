@@ -1,11 +1,9 @@
 boats = "boats"
 loads = "loads"
-
+users = "users"
 
 #attribute list for each type
 #these are the required attributes when posting a new attribute
-#boat = ["name", "type", "length"]
-#load = ["weight", "content", "delivery_date"]
 
 models = {
     "boat": 
