@@ -324,30 +324,6 @@ def loads_get_post():
 
 
 
-
-
-
-
-
-
-
-
-
-
-#from here down needs authorization checks.
-#this ensures user modifying load has the ability to do so
-#example: user can't delete a load that's on a boat they don't own.
-
-
-
-
-
-
-
-
-
-
-
 #*************/loads/<id>*****************************************
 #
 #   Delete:     deletes this load
@@ -365,9 +341,22 @@ def load_get_delete(id):
     if request.method == 'DELETE':
 
         if load['carrier'] != None:
-
+            #check authorization
+            if 'Authorization' not in request.headers:
+                return 'Missing or Invalid JWT', 401
+                #ensure token is valid
+            try:
+                req = requests.Request()
+                token_value = request.headers['Authorization'].split(' ')[1]
+                id_info = id_token.verify_oauth2_token( 
+                token_value, req, client_id)
+            except ValueError:
+                return 'Missing or Invalid JWT', 401
             boat_key = client.key(model.boats, int(load['carrier']['id']))
             boat = client.get(key=boat_key)
+
+            if id_info['sub'] != boat['owner']:
+                return "User not owner of boat", 403
 
             for index, current_load in enumerate(boat['loads']):
                 if current_load['id'] == str(id):
@@ -401,10 +390,25 @@ def load_get_delete(id):
 #   Put:    Puts this boat's id into load's 'current_boat' field
 #   Delete: Removes load from boat, resets 'current_boat' to null
 #
+#   Note: user must be owner of boat to do either
+#
 #*****************************************************************
 @app.route('/boats/<bid>/loads/<lid>', methods=['PUT', 'DELETE'])
 def load_boat_put_delete(lid, bid):
     
+    #check authorization
+    if 'Authorization' not in request.headers:
+        return 'Missing or Invalid JWT', 401
+        #ensure token is valid
+    try:
+        req = requests.Request()
+        token_value = request.headers['Authorization'].split(' ')[1]
+        id_info = id_token.verify_oauth2_token( 
+        token_value, req, client_id)
+    except ValueError:
+        return 'Missing or Invalid JWT', 401
+    
+
     #get load
     load_key = client.key(model.loads, int(lid))
     load = client.get(key=load_key)
@@ -415,7 +419,10 @@ def load_boat_put_delete(lid, bid):
     #check if either is null
     if load == None or boat == None:
         return (json.dumps(c.notFoundBS), 404)  
-
+    #ensure user is owner of boat
+    if id_info['email'] != boat['owner']:
+        return "User not owner of boat", 403
+    
     if request.method == 'PUT':
 
         #ensure load is open
@@ -453,20 +460,6 @@ def load_boat_put_delete(lid, bid):
 
     else:
         return 'Method not recognized, please use PUT or DELETE'
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
