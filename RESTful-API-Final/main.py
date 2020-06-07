@@ -15,7 +15,6 @@ app = Flask(__name__)
 client = datastore.Client()
 
 
-
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
@@ -24,8 +23,7 @@ client = datastore.Client()
 
 ###################################################################################################
 ###################################################################################################
-
-
+###################################################################################################
 #used for testing locally. disables https requirement
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 app.secret_key = str(c.generate_random_code(20))
@@ -35,7 +33,6 @@ client_secret_path = os.path.dirname(os.path.abspath(__file__)) + "/creds/client
 CLIENT_SECRET_FILE = json.load(open(client_secret_path))
 client_id = CLIENT_SECRET_FILE['web']['client_id']
 client_secret = CLIENT_SECRET_FILE['web']["client_secret"]
-
 
 # This is the page that you will use to decode and collect the info from
 # the Google authentication flow
@@ -83,7 +80,6 @@ def oauthroute():
 
     return """Your JWT is: %s <br><br> Please go <a href=%s> here</a> to verify JWT <br><br> user's uniqueID is %s""" % (token['id_token'], verify_url, id_info['email'])
     
-
 # This page demonstrates verifying a JWT. id_info['email'] contains
 # the user's email address and can be used to identify them
 # this is the code that could prefix any API call that needs to be
@@ -100,7 +96,6 @@ def verify():
         return (json.dumps(c.invalid_jwt), 401)
 
     return repr(id_info) + "<br><br> the user is: " + id_info['email']
-
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
@@ -109,11 +104,11 @@ def verify():
 
 
 
-
-
+###################################################################################################
 ###################################################################################################
 ###################################################################################################
 #                                           Users
+###################################################################################################
 ###################################################################################################
 ###################################################################################################
 
@@ -130,12 +125,12 @@ def users_get():
     if request.method == "GET":
         query = client.query(kind=model.users)  
         results = list(query.fetch())
-        c.addTags(results, "/users/")
+        for e in results:
+            e["id"] = str(e.key.id)
         output = {"users": results}
         return json.dumps(output)    
     else:
         return (json.dumps(c.invalid_method), 405)
-
 
 #*************************/users/<id>*************************************************************
 #
@@ -159,19 +154,12 @@ def user_get_delete(id):
     except ValueError:
         return (json.dumps(c.invalid_jwt), 401)
     
-    
-    
-    
-    ###################check if jwt id is same as user id in URL
-
-
-
-
     user_key = client.key(model.users, int(id))    
     user = client.get(key=user_key)
-    
     if user == None:
         return (json.dumps(c.valid_jwt_entity_not_found), 404)
+    if user["uniqueID"] != id_info["email"]:
+        return (json.dumps(c.user_not_authorized), 403)
 
     #all valid, run query
     if request.method == 'GET':
@@ -189,11 +177,8 @@ def user_get_delete(id):
         client.delete(user_key)
         return ('', 204)
 
-
     else:
         return (json.dumps(c.invalid_method), 405)
-
-
 
 
 ###################################################################################################
@@ -203,9 +188,6 @@ def user_get_delete(id):
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
-
-
-
 
 #*************/boats******************************************************************************
 #
@@ -218,6 +200,15 @@ def boats_get_post():
 
     if 'application/json' not in request.accept_mimetypes:
         return (json.dumps(c.accept_head_not_JSON), 406)
+    #ensure token is valid
+    try:
+        req = requests.Request()
+        token_value = request.headers['Authorization'].split(' ')[1]
+        id_info = id_token.verify_oauth2_token( 
+        token_value, req, client_id)
+    except ValueError:
+        return (json.dumps(c.invalid_jwt), 401)
+
     if request.method == 'POST':
         #ensure content type is correct
         if request.headers['Content-Type'] != 'application/json':
@@ -229,15 +220,7 @@ def boats_get_post():
             return (json.dumps(c.bad_req), 400)
         if 'Authorization' not in request.headers:
             return (json.dumps(c.invalid_jwt), 401)
-        #ensure token is valid
-        try:
-            req = requests.Request()
-            token_value = request.headers['Authorization'].split(' ')[1]
-            id_info = id_token.verify_oauth2_token( 
-            token_value, req, client_id)
-        except ValueError:
-            return (json.dumps(c.invalid_jwt), 401)
-
+        
         #All valid, store values and post to client
         new_boat = datastore.entity.Entity(key=client.key(model.boats))
         new_boat.update({"name": content["name"], "type": content["type"], "length": int(content["length"]), "owner": id_info['email'], "loads": []})
@@ -245,10 +228,9 @@ def boats_get_post():
         c.addTag(new_boat, "/boats/")
         return (json.dumps(new_boat), 201)
 
-
-
     elif request.method == "GET":
         query = client.query(kind=model.boats)
+        query.add_filter('owner', '=', id_info['email'])
         q_limit = int(request.args.get('limit', '5'))
         q_offset = int(request.args.get('offset', '0'))
         l_iterator = query.fetch(limit = q_limit, offset = q_offset)
@@ -267,7 +249,6 @@ def boats_get_post():
 
     else:
         return (json.dumps(c.invalid_method), 405)
-
 
 #*************/boats/<id>*******************************************************************
 #
@@ -353,8 +334,6 @@ def boat_get_delete(id):
         return (json.dumps(c.invalid_method), 405)
 
 
-
-
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
@@ -362,8 +341,6 @@ def boat_get_delete(id):
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
-
-
 
 #*************/loads*******************************************************************************
 #
@@ -392,7 +369,7 @@ def loads_get_post():
 
     elif request.method == "GET":
         query = client.query(kind=model.loads)
-        q_limit = int(request.args.get('limit', '3'))
+        q_limit = int(request.args.get('limit', '5'))
         q_offset = int(request.args.get('offset', '0'))
         l_iterator = query.fetch(limit = q_limit, offset = q_offset)
         pages = l_iterator.pages
@@ -413,10 +390,6 @@ def loads_get_post():
     else:
         return (json.dumps(c.invalid_method), 405)
 
-
-
-
-
 #*********************************/loads/<id>******************************************************
 #
 #   DELETE:     deletes this load
@@ -427,27 +400,20 @@ def loads_get_post():
 #**************************************************************************************************
 @app.route('/loads/<id>', methods=['DELETE', 'GET'])
 def load_get_delete(id):
-
     if 'application/json' not in request.accept_mimetypes:
         return (json.dumps(c.accept_head_not_JSON), 406)
-
     load_key = client.key(model.loads, int(id))
     load = client.get(key=load_key)
     if load == None:
         return (json.dumps(c.id_not_found), 404)
-
     #PUT/PATCH request
     if request.method == 'PUT' or request.method == 'PATCH':
-
         if request.headers['Content-Type'] != 'application/json':
             return (json.dumps(c.content_type_not_JSON), 415)
-
         content = request.get_json()
-
         #if Put, reset all values to None
         if request.method == 'PUT':
             load.update({'weight': None, 'content': None, 'delivery_date': None})
-
         #error check content and add into boat object
         if model.invalidAttribute(content, "load"):
             return (json.dumps(c.bad_req), 400)
@@ -462,9 +428,7 @@ def load_get_delete(id):
             return res
         else:
             return (json.dumps(load), 200)
-
     if request.method == 'DELETE':
-
         if load['carrier'] != None:
             #check authorization
             if 'Authorization' not in request.headers:
@@ -479,30 +443,21 @@ def load_get_delete(id):
                 return (json.dumps(c.invalid_jwt), 401)
             boat_key = client.key(model.boats, int(load['carrier']['id']))
             boat = client.get(key=boat_key)
-
             if id_info['email'] != boat['owner']:
                 return (json.dumps(c.user_not_authorized), 403)
-
             for index, current_load in enumerate(boat['loads']):
                 if current_load['id'] == str(id):
                     #del load
                     del boat['loads'][index]
-
             load.update({'carrier': None})
-
             client.put(boat)
-
         client.delete(load_key)
         return ('',204)
-
     elif request.method == 'GET':
         c.addTag(load, "/loads/")
         return json.dumps(load)
-
     else:
         return (json.dumps(c.invalid_method), 405)
-
-
 
 
 ###################################################################################################
@@ -512,7 +467,6 @@ def load_get_delete(id):
 ###################################################################################################
 ###################################################################################################
 ###################################################################################################
-
 
 #*************/boats/<boat_id>/loads/<load id>*****************************************************
 #
@@ -536,62 +490,47 @@ def load_boat_put_delete(lid, bid):
         token_value, req, client_id)
     except ValueError:
         return (json.dumps(c.invalid_jwt), 401)
-    
-
+ 
     #get load
     load_key = client.key(model.loads, int(lid))
     load = client.get(key=load_key)
     #get boat
     boat_key = client.key(model.boats, int(bid))
     boat = client.get(key=boat_key)
-
     #check if either is null
     if load == None or boat == None:
         return (json.dumps(c.ids_not_found), 404)  
     #ensure user is owner of boat
     if id_info['email'] != boat['owner']:
         return (json.dumps(c.user_not_authorized), 403)
-    
     if request.method == 'PUT':
-
         #ensure load is open
         if load["carrier"] != None:
             return (json.dumps(c.not_empty), 403)
-
         #add boat id and name to load 'carrier' field
         load.update({"carrier": {"id": str(bid), "name": boat['name']}})
         client.put(load)
-
         #add load id and name to new json object, append to boat's 'loads'
        	new_load = {'id': lid, 'content': load['content']}
         boat['loads'].append(new_load)
         client.put(boat)
         return ('', 204)
-
     elif request.method == 'DELETE':
-
         #ensure this boat has this load
         if load["carrier"]["id"] != str(bid):
             return (json.dumps(c.load_not_on_boat), 404)
-    
     	#delete the load in the boat's 'loads'
         for index, current_load in enumerate(boat['loads']):
         	if current_load['id'] == str(lid):
         		#del load
         		del boat['loads'][index]
-
         #reset 'carrier' to null
         load.update({"carrier": None})
-
         client.put(boat)
         client.put(load)
         return ('', 204)
-
     else:
         return (json.dumps(c.invalid_method), 405)
-
-
-
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080, debug=True)
