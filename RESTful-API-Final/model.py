@@ -13,8 +13,9 @@ models = {
 }
 
 
+#used in POST requests
 #checks to see if all attributes are in request
-#false if one is missing, true if all are within request
+#true if one is missing, false if all are within request
 def invalidRequest(request, inputModel):
     for mod in models:
         if str(inputModel) == str(mod):
@@ -24,4 +25,18 @@ def invalidRequest(request, inputModel):
             return False
     return True
 
+#used in PUT/PATCH requests
+#ensures req attributes are in the model
+#false if all req atts are valid ones
+def invalidAttribute(request, inputModel):
+    for mod in models:
+        if str(inputModel) == str(mod):
+            for att in request:
+                if att not in models[mod]:
+                    return True
+            return False
+    return True
+
+
+            
 
