@@ -25,7 +25,7 @@ client = datastore.Client()
 ###################################################################################################
 ###################################################################################################
 #used for testing locally. disables https requirement
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+#os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 app.secret_key = str(c.generate_random_code(20))
 
 # #get client_secret file from directory and assign values
