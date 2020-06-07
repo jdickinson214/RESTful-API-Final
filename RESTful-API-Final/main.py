@@ -192,10 +192,8 @@ def boats_get_post():
         new_boat = datastore.entity.Entity(key=client.key(model.boats))
         new_boat.update({"name": content["name"], "type": content["type"], "length": int(content["length"]), "owner": id_info['email'], "loads": []})
         client.put(new_boat)
-        results = {'new boat': new_boat}
-        c.addTags(results, "/boats/")
-        #new_boat.update({"id": str(new_boat.key.id)})
-        return (json.dumps(results), 201)
+        c.addTag(new_boat, "/boats/")
+        return (json.dumps(new_boat), 201)
 
 
 
@@ -252,18 +250,19 @@ def boat_get_delete(id):
     
     if request.method == 'GET':
         for load in boat['loads']:
-        	load.update({"self": c.url + "/loads/" + load['id']})
-        boat.update({"id": id, "self": c.url + "/boats/" + id})
+        	c.addTag(load, "/loads/")
+        c.addTag(boat, "/boats/")
         return json.dumps(boat)
 
     elif request.method == 'DELETE':
         #go through all loads on boat and reset 'carrier' to null
         #then delete boat
-        for current_Load in boat['loads']:
-            load_key = client.key(model.loads, int(current_Load['id']))
-            load = client.get(key=load_key)
-            load.update({"carrier": None})
-            client.put(load)
+        if len(boat['loads']) > 0:
+            for current_Load in boat['loads']:
+                load_key = client.key(model.loads, int(current_Load['id']))
+                load = client.get(key=load_key)
+                load.update({"carrier": None})
+                client.put(load)
         client.delete(boat_key)
         return ('',204)
 
@@ -292,7 +291,7 @@ def loads_get_post():
         new_load = datastore.entity.Entity(key=client.key(model.loads))
         new_load.update({"weight": content["weight"], "carrier": None, "content": content["content"], "delivery_date": content["delivery_date"]})
         client.put(new_load)
-        new_load.update({"id": str(new_load.key.id), "self": c.url + "/loads/" + str(new_load.key.id)})
+        c.addTag(new_load, "/loads/")
         return (json.dumps(new_load), 201)
 
 
@@ -371,7 +370,7 @@ def load_get_delete(id):
         return ('',204)
 
     elif request.method == 'GET':
-        load.update({"id": id, "self": c.url + "/loads/" + id})
+        c.addTag(load, "/loads/")
         return json.dumps(load)
 
     else:

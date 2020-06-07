@@ -22,12 +22,16 @@ unknownHeaderReq = {"Error": "unknown header request type. Must be application/j
 accNotJSON = {"Error": "request header 'Accept' mimetype must be application/json"}
 
 
-#adds id and self web URL to object
+#adds id and self web URL to list of objects
 def addTags(results, typeObject):
     for e in results:
         e["id"] = str(e.key.id)
         e["self"] = url + str(typeObject) + str(e.key.id)
 
+#adds id and self web URL to single object
+def addTag(result, typeObject):
+    result["id"] = str(result.key.id)
+    result["self"] = url + str(typeObject) + str(result.key.id)
 
 #input length parameter and get a string of random ascii letters and digits
 #used for app.secret_key and for 'state' variable in OAuth2 main.py
