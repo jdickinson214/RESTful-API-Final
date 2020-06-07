@@ -15,6 +15,17 @@ app = Flask(__name__)
 client = datastore.Client()
 
 
+
+###################################################################################################
+###################################################################################################
+###################################################################################################
+
+#                       OAuth2.0 JWT Generation for users
+
+###################################################################################################
+###################################################################################################
+
+
 #used for testing locally. disables https requirement
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 app.secret_key = str(c.generate_random_code(20))
@@ -35,8 +46,7 @@ redirect_uri = c.url + '/oauth'
 scope = ['https://www.googleapis.com/auth/userinfo.email', 
          'openid',
          'https://www.googleapis.com/auth/userinfo.profile']
-oauth = OAuth2Session(client_id, redirect_uri=redirect_uri,
-                          scope=scope)
+oauth = OAuth2Session(client_id, redirect_uri=redirect_uri, scope=scope)
 
 # This link will redirect users to begin the OAuth flow with Google
 @app.route('/')
@@ -66,7 +76,7 @@ def oauthroute():
     query.add_filter('uniqueID', '=', id_info['email'])
     results = list(query.fetch())
     if not results:
-        #list is empty, add new user
+        #user is not already in database, add new user
         new_user = datastore.entity.Entity(key=client.key(model.users))
         new_user.update({"uniqueID": id_info['email']})
         client.put(new_user)
@@ -91,12 +101,29 @@ def verify():
 
     return repr(id_info) + "<br><br> the user is: " + id_info['email']
 
+###################################################################################################
+###################################################################################################
+###################################################################################################
+###################################################################################################
 
 
 
 
 
 
+###################################################################################################
+###################################################################################################
+#                                           Users
+###################################################################################################
+###################################################################################################
+
+#*******/users*************************************************************************************
+#
+#   GET:    gets all users
+#
+#   Note: Unprotected. anyone can see list of all users
+#
+#**************************************************************************************************
 
 @app.route('/users', methods=['GET'])
 def users_get():
@@ -109,15 +136,19 @@ def users_get():
     else:
         return 'Method not recognized, please use GET'
 
-##############################################################
+
+#*************************/users/<id>*************************************************************
 #
 #   GET:    gets this user and all boats they own
 #   DELETE: if authorized, delete this user
-#   
+#   PUT:    
+#   PATCH:  
+# 
+#    
 #   note: checks bearer token for jwt and returns all boats for
 #   that jwt, not for the id
 #
-##############################################################
+#*************************************************************************************************
 
 @app.route('/users/<id>', methods=['DELETE', 'GET'])
 def user_get_delete(id):
@@ -155,14 +186,23 @@ def user_get_delete(id):
 
 
 
+###################################################################################################
+###################################################################################################
+###################################################################################################
+#                                       Boats
+###################################################################################################
+###################################################################################################
+###################################################################################################
 
 
-#*************/boats*************
+
+
+#*************/boats******************************************************************************
 #
 #   Post:   create a new boat
 #   Get:    returns all boats
 #
-#********************************
+#*************************************************************************************************
 @app.route('/boats', methods=['POST', 'GET'])
 def boats_get_post():
 
@@ -219,14 +259,17 @@ def boats_get_post():
         return 'Method not recognized, please use either GET or POST'
 
 
-#*************/boats/<id>*************
+#*************/boats/<id>*******************************************************************
 #
 #   Delete:     deletes this boat
 #   Get:        returns this boat
 #
-#*************************************
+#*******************************************************************************************
 @app.route('/boats/<id>', methods=['DELETE', 'GET'])
 def boat_get_delete(id):
+
+    if 'application/json' not in request.accept_mimetypes:
+        return (json.dumps(c.accNotJSON), 406)
 
     #check authorization
     if 'Authorization' not in request.headers:
@@ -244,7 +287,7 @@ def boat_get_delete(id):
     boat_key = client.key(model.boats, int(id))
     boat = client.get(key=boat_key)
     if boat == None:
-        return "JWT valid but no boat with this boat_id exists", 403
+        return "JWT valid but no boat with this boat_id exists", 404
     if id_info['email'] != boat['owner']:
         return "User not owner of boat", 403
     
@@ -272,17 +315,28 @@ def boat_get_delete(id):
 
 
 
+###################################################################################################
+###################################################################################################
+###################################################################################################
+#                                       Loads
+###################################################################################################
+###################################################################################################
+###################################################################################################
 
-#*************/loads**********************************************
+
+
+#*************/loads*******************************************************************************
 #
 #   Post:   create a new load
 #   Get:    returns all loads
 #
 #   Note: New loads start with null in their 'carrier' field
-#*****************************************************************
+#**************************************************************************************************
 @app.route('/loads', methods=['POST', 'GET'])
 def loads_get_post():
 
+    if 'application/json' not in request.accept_mimetypes:
+        return (json.dumps(c.accNotJSON), 406)
 
     if request.method == 'POST':
         content = request.get_json()
@@ -323,14 +377,17 @@ def loads_get_post():
 
 
 
-#*************/loads/<id>*****************************************
+#*********************************/loads/<id>******************************************************
 #
 #   Delete:     deletes this load
 #   Get:        returns this load
 #
-#*****************************************************************
+#**************************************************************************************************
 @app.route('/loads/<id>', methods=['DELETE', 'GET'])
 def load_get_delete(id):
+
+    if 'application/json' not in request.accept_mimetypes:
+        return (json.dumps(c.accNotJSON), 406)
 
     load_key = client.key(model.loads, int(id))
     load = client.get(key=load_key)
@@ -379,19 +436,23 @@ def load_get_delete(id):
 
 
 
+###################################################################################################
+###################################################################################################
+###################################################################################################
+#                                Boats and Loads Interactions
+###################################################################################################
+###################################################################################################
+###################################################################################################
 
 
-
-
-
-#*************/boats/<boat_id>/loads/<load id>********************
+#*************/boats/<boat_id>/loads/<load id>*****************************************************
 #
 #   Put:    Puts this boat's id into load's 'current_boat' field
 #   Delete: Removes load from boat, resets 'current_boat' to null
 #
 #   Note: user must be owner of boat to do either
 #
-#*****************************************************************
+#**************************************************************************************************
 @app.route('/boats/<bid>/loads/<lid>', methods=['PUT', 'DELETE'])
 def load_boat_put_delete(lid, bid):
     
@@ -459,7 +520,6 @@ def load_boat_put_delete(lid, bid):
 
     else:
         return 'Method not recognized, please use PUT or DELETE'
-
 
 
 
