@@ -1,5 +1,5 @@
 from google.cloud import datastore
-from flask import Flask, request
+from flask import Flask, request, make_response
 from requests_oauthlib import OAuth2Session
 import json
 import constants as c
@@ -97,7 +97,7 @@ def verify():
       id_info = id_token.verify_oauth2_token( 
         request.args['jwt'], req, client_id)
     except ValueError:
-      return 'Invalid jwt', 401
+        return (json.dumps(c.invalid_jwt), 401)
 
     return repr(id_info) + "<br><br> the user is: " + id_info['email']
 
@@ -134,16 +134,13 @@ def users_get():
         output = {"users": results}
         return json.dumps(output)    
     else:
-        return 'Method not recognized, please use GET'
+        return (json.dumps(c.invalid_method), 405)
 
 
 #*************************/users/<id>*************************************************************
 #
 #   GET:    gets this user and all boats they own
 #   DELETE: if authorized, delete this user
-#   PUT:    
-#   PATCH:  
-# 
 #    
 #   note: checks bearer token for jwt and returns all boats for
 #   that jwt, not for the id
@@ -153,24 +150,37 @@ def users_get():
 @app.route('/users/<id>', methods=['DELETE', 'GET'])
 def user_get_delete(id):
     if 'Authorization' not in request.headers:
-        return 'Missing or Invalid JWT', 401
+        return (json.dumps(c.invalid_jwt), 401)
     #ensure token is valid
     try:
         req = requests.Request()
         token_value = request.headers['Authorization'].split(' ')[1]
         id_info = id_token.verify_oauth2_token(token_value, req, client_id)
     except ValueError:
-        return 'Missing or Invalid JWT', 401
+        return (json.dumps(c.invalid_jwt), 401)
     
+    
+    
+    
+    ###################check if jwt id is same as user id in URL
+
+
+
+
     user_key = client.key(model.users, int(id))    
     user = client.get(key=user_key)
     
+    if user == None:
+        return (json.dumps(c.valid_jwt_entity_not_found), 404)
+
     #all valid, run query
     if request.method == 'GET':
         query = client.query(kind=model.boats)
         query.add_filter('owner', '=', str(id_info['email']))
         boatList = list(query.fetch())
         c.addTags(boatList, "/boats/")
+        for boat in boatList:
+            boat.pop("owner", None)
         user.update({"id": str(user.key.id), "boats": boatList})
         output = {"user": user}
         return json.dumps(output)
@@ -181,7 +191,7 @@ def user_get_delete(id):
 
 
     else:
-        return 'Method not recognized, please use DELETE or GET'
+        return (json.dumps(c.invalid_method), 405)
 
 
 
@@ -207,18 +217,18 @@ def user_get_delete(id):
 def boats_get_post():
 
     if 'application/json' not in request.accept_mimetypes:
-        return (json.dumps(c.accNotJSON), 406)
+        return (json.dumps(c.accept_head_not_JSON), 406)
     if request.method == 'POST':
         #ensure content type is correct
         if request.headers['Content-Type'] != 'application/json':
-            return (json.dumps(c.reqHeadNotJSON), 415)
+            return (json.dumps(c.content_type_not_JSON), 415)
         content = request.get_json()
 
         #   Input Validation
         if model.invalidRequest(content, "boat"):
-            return (json.dumps(c.badRequest), 400)
+            return (json.dumps(c.bad_req), 400)
         if 'Authorization' not in request.headers:
-            return 'Missing or Invalid JWT', 401
+            return (json.dumps(c.invalid_jwt), 401)
         #ensure token is valid
         try:
             req = requests.Request()
@@ -226,7 +236,7 @@ def boats_get_post():
             id_info = id_token.verify_oauth2_token( 
             token_value, req, client_id)
         except ValueError:
-            return 'Missing or Invalid JWT', 401
+            return (json.dumps(c.invalid_jwt), 401)
 
         #All valid, store values and post to client
         new_boat = datastore.entity.Entity(key=client.key(model.boats))
@@ -256,47 +266,77 @@ def boats_get_post():
         return json.dumps(output)
 
     else:
-        return 'Method not recognized, please use either GET or POST'
+        return (json.dumps(c.invalid_method), 405)
 
 
 #*************/boats/<id>*******************************************************************
 #
-#   Delete:     deletes this boat
-#   Get:        returns this boat
+#   DELETE:     deletes this boat
+#   GET:        returns this boat
+#   PUT:        changes object. removes unmentioned attributes
+#   PATCH:      changes object. retains unmentioned attributes
 #
 #*******************************************************************************************
-@app.route('/boats/<id>', methods=['DELETE', 'GET'])
+@app.route('/boats/<id>', methods=['DELETE', 'GET', 'PUT', 'PATCH'])
 def boat_get_delete(id):
-
-    if 'application/json' not in request.accept_mimetypes:
-        return (json.dumps(c.accNotJSON), 406)
 
     #check authorization
     if 'Authorization' not in request.headers:
-        return 'Missing or Invalid JWT', 401
-        #ensure token is valid
+        return (json.dumps(c.invalid_jwt), 401)
+    #ensure token is valid
     try:
         req = requests.Request()
         token_value = request.headers['Authorization'].split(' ')[1]
         id_info = id_token.verify_oauth2_token( 
         token_value, req, client_id)
     except ValueError:
-        return 'Missing or Invalid JWT', 401
-    
+        return (json.dumps(c.invalid_jwt), 401)
     #check boat is valid
     boat_key = client.key(model.boats, int(id))
     boat = client.get(key=boat_key)
     if boat == None:
-        return "JWT valid but no boat with this boat_id exists", 404
+        return (json.dumps(c.valid_jwt_entity_not_found), 404)
     if id_info['email'] != boat['owner']:
-        return "User not owner of boat", 403
+        return (json.dumps(c.user_not_authorized), 403)
     
+    #PUT/PATCH request
+    if request.method == 'PUT' or request.method == 'PATCH':
+
+        if request.headers['Content-Type'] != 'application/json':
+            return (json.dumps(c.content_type_not_JSON), 415)
+        if 'application/json' not in request.accept_mimetypes:
+            return (json.dumps(c.accept_head_not_JSON), 406)
+        content = request.get_json()
+
+        #if Put, reset all values to None
+        if request.method == 'PUT':
+            boat.update({'name': None, 'length': None, 'type': None})
+
+        #error check content and add into boat object
+        if model.invalidAttribute(content, "boat"):
+            return (json.dumps(c.bad_req), 400)
+        for attribute in content:
+            boat.update({str(attribute): content[attribute]})
+        client.put(boat)
+        c.addTag(boat, "/boats/")
+        if request.method == 'PUT':
+            res = make_response(json.dumps(boat))
+            res.location = boat["self"]
+            res.status_code = 303
+            return res
+        else:
+            return (json.dumps(boat), 200)
+
+    #GET request
     if request.method == 'GET':
+        if 'application/json' not in request.accept_mimetypes:
+            return (json.dumps(c.accept_head_not_JSON), 406)
         for load in boat['loads']:
-        	c.addTag(load, "/loads/")
+            load.update({"self": c.url + "/loads/" + load['id']})
         c.addTag(boat, "/boats/")
         return json.dumps(boat)
 
+    #DELETE request
     elif request.method == 'DELETE':
         #go through all loads on boat and reset 'carrier' to null
         #then delete boat
@@ -310,7 +350,7 @@ def boat_get_delete(id):
         return ('',204)
 
     else:
-        return 'Method not recognized, please use DELETE, or GET'
+        return (json.dumps(c.invalid_method), 405)
 
 
 
@@ -336,18 +376,19 @@ def boat_get_delete(id):
 def loads_get_post():
 
     if 'application/json' not in request.accept_mimetypes:
-        return (json.dumps(c.accNotJSON), 406)
+        return (json.dumps(c.accept_head_not_JSON), 406)
 
     if request.method == 'POST':
+        if request.headers['Content-Type'] != 'application/json':
+            return (json.dumps(c.content_type_not_JSON), 415)
         content = request.get_json()
         if model.invalidRequest(content, "load"):
-            return (json.dumps(c.badRequest), 400)
+            return (json.dumps(c.bad_req), 400)
         new_load = datastore.entity.Entity(key=client.key(model.loads))
         new_load.update({"weight": content["weight"], "carrier": None, "content": content["content"], "delivery_date": content["delivery_date"]})
         client.put(new_load)
         c.addTag(new_load, "/loads/")
         return (json.dumps(new_load), 201)
-
 
     elif request.method == "GET":
         query = client.query(kind=model.loads)
@@ -366,12 +407,11 @@ def loads_get_post():
         output = {"loads": results}
         if next_url:
         	output["next"] = next_url
-        c.addTags(results, "/loads/") #function in constants.py
+        c.addTags(results, "/loads/")
         return json.dumps(output)
 
-
     else:
-        return 'Method not recognized, please use either GET or POST'
+        return (json.dumps(c.invalid_method), 405)
 
 
 
@@ -379,27 +419,56 @@ def loads_get_post():
 
 #*********************************/loads/<id>******************************************************
 #
-#   Delete:     deletes this load
-#   Get:        returns this load
+#   DELETE:     deletes this load
+#   GET:        returns this load
+#   PUT:        changes object. removes unmentioned attributes
+#   PATCH:      changes object. retains unmentioned attributes
 #
 #**************************************************************************************************
 @app.route('/loads/<id>', methods=['DELETE', 'GET'])
 def load_get_delete(id):
 
     if 'application/json' not in request.accept_mimetypes:
-        return (json.dumps(c.accNotJSON), 406)
+        return (json.dumps(c.accept_head_not_JSON), 406)
 
     load_key = client.key(model.loads, int(id))
     load = client.get(key=load_key)
     if load == None:
-        return (json.dumps(c.loadNotFound), 404)
+        return (json.dumps(c.id_not_found), 404)
+
+    #PUT/PATCH request
+    if request.method == 'PUT' or request.method == 'PATCH':
+
+        if request.headers['Content-Type'] != 'application/json':
+            return (json.dumps(c.content_type_not_JSON), 415)
+
+        content = request.get_json()
+
+        #if Put, reset all values to None
+        if request.method == 'PUT':
+            load.update({'weight': None, 'content': None, 'delivery_date': None})
+
+        #error check content and add into boat object
+        if model.invalidAttribute(content, "load"):
+            return (json.dumps(c.bad_req), 400)
+        for attribute in content:
+            load.update({str(attribute): content[attribute]})
+        client.put(load)
+        c.addTag(load, "/loads/")
+        if request.method == 'PUT':
+            res = make_response(json.dumps(load))
+            res.location = load["self"]
+            res.status_code = 303
+            return res
+        else:
+            return (json.dumps(load), 200)
 
     if request.method == 'DELETE':
 
         if load['carrier'] != None:
             #check authorization
             if 'Authorization' not in request.headers:
-                return 'Missing or Invalid JWT', 401
+                return (json.dumps(c.invalid_jwt), 401)
                 #ensure token is valid
             try:
                 req = requests.Request()
@@ -407,12 +476,12 @@ def load_get_delete(id):
                 id_info = id_token.verify_oauth2_token( 
                 token_value, req, client_id)
             except ValueError:
-                return 'Missing or Invalid JWT', 401
+                return (json.dumps(c.invalid_jwt), 401)
             boat_key = client.key(model.boats, int(load['carrier']['id']))
             boat = client.get(key=boat_key)
 
-            if id_info['sub'] != boat['owner']:
-                return "User not owner of boat", 403
+            if id_info['email'] != boat['owner']:
+                return (json.dumps(c.user_not_authorized), 403)
 
             for index, current_load in enumerate(boat['loads']):
                 if current_load['id'] == str(id):
@@ -431,7 +500,7 @@ def load_get_delete(id):
         return json.dumps(load)
 
     else:
-        return 'Method not recognized, please use DELETE, or GET'
+        return (json.dumps(c.invalid_method), 405)
 
 
 
@@ -447,8 +516,8 @@ def load_get_delete(id):
 
 #*************/boats/<boat_id>/loads/<load id>*****************************************************
 #
-#   Put:    Puts this boat's id into load's 'current_boat' field
-#   Delete: Removes load from boat, resets 'current_boat' to null
+#   PUT:        Puts this boat's id into load's 'current_boat' field
+#   DELETE:     Removes load from boat, resets 'current_boat' to null
 #
 #   Note: user must be owner of boat to do either
 #
@@ -458,7 +527,7 @@ def load_boat_put_delete(lid, bid):
     
     #check authorization
     if 'Authorization' not in request.headers:
-        return 'Missing or Invalid JWT', 401
+        return (json.dumps(c.invalid_jwt), 401)
         #ensure token is valid
     try:
         req = requests.Request()
@@ -466,7 +535,7 @@ def load_boat_put_delete(lid, bid):
         id_info = id_token.verify_oauth2_token( 
         token_value, req, client_id)
     except ValueError:
-        return 'Missing or Invalid JWT', 401
+        return (json.dumps(c.invalid_jwt), 401)
     
 
     #get load
@@ -478,16 +547,16 @@ def load_boat_put_delete(lid, bid):
 
     #check if either is null
     if load == None or boat == None:
-        return (json.dumps(c.notFoundBS), 404)  
+        return (json.dumps(c.ids_not_found), 404)  
     #ensure user is owner of boat
     if id_info['email'] != boat['owner']:
-        return "User not owner of boat", 403
+        return (json.dumps(c.user_not_authorized), 403)
     
     if request.method == 'PUT':
 
         #ensure load is open
         if load["carrier"] != None:
-            return (json.dumps(c.notEmpty), 403)
+            return (json.dumps(c.not_empty), 403)
 
         #add boat id and name to load 'carrier' field
         load.update({"carrier": {"id": str(bid), "name": boat['name']}})
@@ -501,9 +570,9 @@ def load_boat_put_delete(lid, bid):
 
     elif request.method == 'DELETE':
 
-        #ensure this boat is in this load
+        #ensure this boat has this load
         if load["carrier"]["id"] != str(bid):
-            return (json.dumps(c.boatNotHere), 404)
+            return (json.dumps(c.load_not_on_boat), 404)
     
     	#delete the load in the boat's 'loads'
         for index, current_load in enumerate(boat['loads']):
@@ -519,7 +588,7 @@ def load_boat_put_delete(lid, bid):
         return ('', 204)
 
     else:
-        return 'Method not recognized, please use PUT or DELETE'
+        return (json.dumps(c.invalid_method), 405)
 
 
 
