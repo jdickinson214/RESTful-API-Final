@@ -204,8 +204,7 @@ def boats_get_post():
     try:
         req = requests.Request()
         token_value = request.headers['Authorization'].split(' ')[1]
-        id_info = id_token.verify_oauth2_token( 
-        token_value, req, client_id)
+        id_info = id_token.verify_oauth2_token(token_value, req, client_id)
     except ValueError:
         return (json.dumps(c.invalid_jwt), 401)
 
@@ -398,7 +397,7 @@ def loads_get_post():
 #   PATCH:      changes object. retains unmentioned attributes
 #
 #**************************************************************************************************
-@app.route('/loads/<id>', methods=['DELETE', 'GET'])
+@app.route('/loads/<id>', methods=['DELETE', 'GET', 'PUT', 'PATCH'])
 def load_get_delete(id):
     if 'application/json' not in request.accept_mimetypes:
         return (json.dumps(c.accept_head_not_JSON), 406)
@@ -433,7 +432,7 @@ def load_get_delete(id):
             #check authorization
             if 'Authorization' not in request.headers:
                 return (json.dumps(c.invalid_jwt), 401)
-                #ensure token is valid
+            #ensure token is valid
             try:
                 req = requests.Request()
                 token_value = request.headers['Authorization'].split(' ')[1]
