@@ -201,6 +201,8 @@ def boats_get_post():
     if 'application/json' not in request.accept_mimetypes:
         return (json.dumps(c.accept_head_not_JSON), 406)
     #ensure token is valid
+    if 'Authorization' not in request.headers:
+        return (json.dumps(c.invalid_jwt), 401)
     try:
         req = requests.Request()
         token_value = request.headers['Authorization'].split(' ')[1]
