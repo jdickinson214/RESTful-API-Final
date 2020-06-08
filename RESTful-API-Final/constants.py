@@ -1,8 +1,8 @@
 import random
 import string
 
-#url = "https://dickinsj-project.uc.r.appspot.com"
-url = "http://127.0.0.1:8080"
+url = "https://dickinsj-project.uc.r.appspot.com"
+#url = "http://127.0.0.1:8080"
 
 
 #general error messages
